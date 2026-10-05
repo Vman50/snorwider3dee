@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="description" content="Snorwider 3D - an endless 3D sledding game with power-ups. Play in your browser.">
+<title>Snorwider 3D</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%234fb4ff'/%3E%3Cpath d='M12 42l40-8-4 10H16z' fill='%23c0392b'/%3E%3Ccircle cx='30' cy='24' r='8' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud" class="hidden">
+  <div class="stat"><span class="label">SCORE</span><span id="score">0</span></div>
+  <div class="stat"><span class="label">DISTANCE</span><span id="dist">0 m</span></div>
+  <div class="stat"><span class="label">GIFTS</span><span id="gifts">0</span></div>
+  <div class="stat"><span class="label">BEST</span><span id="best">0</span></div>
+  <div id="buttons">
+    <button id="btnPause" title="Pause (P)">II</button>
+    <button id="btnMute" title="Mute (M)">&#9835;</button>
+  </div>
+</div>
+<div id="effects"></div>
+<div id="speedbar" class="hidden"><div id="speedfill"></div></div>
+
+<div id="menu" class="panel">
+  <h1>SNORWIDER <span>3D</span></h1>
+  <p class="tag">Slide down the mountain. Dodge trees. Grab gifts. Get power-ups.</p>
+  <div class="how">
+    <div><b>&larr; &rarr;</b> / <b>A D</b> steer &nbsp;|&nbsp; touch left / right side</div>
+    <div><b>Ramps</b> launch you over obstacles &nbsp;|&nbsp; <b>P</b> pause &nbsp;|&nbsp; <b>M</b> mute</div>
+  </div>
+  <div class="legend">
+    <span class="pu" style="--c:#4fe0ff">Shield <i>survive a hit</i></span>
+    <span class="pu" style="--c:#ff4d5e">Magnet <i>pulls gifts in</i></span>
+    <span class="pu" style="--c:#ffa21f">Turbo <i>smash through</i></span>
+    <span class="pu" style="--c:#ffd23f">2X <i>double points</i></span>
+    <span class="pu" style="--c:#b27cff">Slow-Mo <i>ease the pace</i></span>
+  </div>
+  <button id="btnStart" class="big">PLAY</button>
+  <p class="small">Best: <b id="menuBest">0</b></p>
+</div>
+
+<div id="over" class="panel hidden">
+  <h2>WIPEOUT!</h2>
+  <div class="results">
+    <div><span class="label">SCORE</span><b id="oScore">0</b></div>
+    <div><span class="label">DISTANCE</span><b id="oDist">0 m</b></div>
+    <div><span class="label">GIFTS</span><b id="oGifts">0</b></div>
+  </div>
+  <p id="newBest" class="hidden">NEW BEST!</p>
+  <button id="btnAgain" class="big">RIDE AGAIN</button>
+  <p class="small">Space / Enter to restart</p>
+</div>
+
+<div id="pause" class="panel hidden">
+  <h2>PAUSED</h2>
+  <button id="btnResume" class="big">RESUME</button>
+</div>
+
+<noscript><div class="panel">This game needs JavaScript and WebGL.</div></noscript>
+<script type="module" src="game.js"></script>
+</body>
+</html>
