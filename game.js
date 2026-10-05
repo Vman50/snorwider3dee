@@ -7,7 +7,8 @@ import * as THREE from './lib/three.module.js';
 const SLOPE_ANGLE = 0.34;
 const S = Math.tan(SLOPE_ANGLE);           // ground height = z * S
 const groundY = (z) => z * S;
-const TRACK_HALF = 15.5;                   // playable half width
+const SLED_R = 0.55;                       // sled collision circle radius (half its width)
+const TRACK_HALF = 15.5;                   // sled-centre limit; the sled's side touches the wall exactly there
 const GRAVITY = 46;
 const JUMP_V = 18;
 const SPAWN_AHEAD = 240;
@@ -21,6 +22,17 @@ const POW = {
   slow:   { name: 'Slow-Mo',  color: 0xb27cff, css: '#b27cff', dur: 8,  label: 'SLOW'   },
 };
 const POW_KEYS = Object.keys(POW);
+
+/* ---------------- world curvature ----------------
+   The world bends away below the horizon ahead of the player: every vertex drops
+   by CURVE * (distance ahead)^2 in view space. Materials that define NO_CURVE opt out. */
+const CURVE = 0.00075;
+THREE.ShaderChunk.project_vertex = THREE.ShaderChunk.project_vertex.replace(
+  'mvPosition = modelViewMatrix * mvPosition;',
+  `mvPosition = modelViewMatrix * mvPosition;
+#ifndef NO_CURVE
+mvPosition.y -= ${CURVE.toFixed(6)} * mvPosition.z * mvPosition.z;
+#endif`);
 
 /* ---------------- renderer / scene ---------------- */
 const canvas = document.getElementById('c');
@@ -286,12 +298,15 @@ function buildDeadTree() {
 function buildBoulders() {
   const g = new THREE.Group();
   const n = 2 + Math.floor(Math.random() * 3);
+  const shapes = [];
   for (let i = 0; i < n; i++) {
-    const r = buildRock(rnd(0.7, 1.6));
+    const sc = rnd(0.7, 1.6);
+    const r = buildRock(sc);
     r.position.set((i - (n - 1) / 2) * 2.2 + rnd(-0.4, 0.4), 0, rnd(-0.8, 0.8));
     r.rotation.y = Math.random() * 6; g.add(r);
+    shapes.push({ c: [r.position.x, r.position.z, 1.25 * sc] });
   }
-  return { g, hx: n * 1.15 + 0.4 };
+  return { g, hx: n * 1.15 + 0.4, shapes };
 }
 
 function buildIce() {
@@ -316,7 +331,9 @@ function buildStump() {
 
 function buildMound() {
   const g = new THREE.Group();
-  g.add(mesh(geo.sphere, mat.snow, 0, 0, 0, rnd(1.8, 2.8), rnd(0.8, 1.1), rnd(1.4, 2.2)));
+  const a = rnd(1.8, 2.8), b = rnd(1.4, 2.2);
+  g.add(mesh(geo.sphere, mat.snow, 0, 0, 0, a, rnd(0.8, 1.1), b));
+  g.userData.ellipse = [a, b];
   return g;
 }
 
@@ -433,6 +450,34 @@ const ground = new THREE.Mesh(new THREE.PlaneGeometry(GW, GL), new THREE.MeshLam
 ground.rotation.x = -Math.PI / 2 - SLOPE_ANGLE;
 scene.add(ground);
 
+// straight, truly vertical side walls hugging the track (top = ground + WALL_H, sheared with the slope)
+const WALL_X = TRACK_HALF + SLED_R, WALL_H = 16, WALL_LEN = 620;
+const wallTex = (() => {
+  const c = document.createElement('canvas'); c.width = 128; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#e9f4ff'; g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 320; i++) { g.fillStyle = `rgba(110,160,215,${Math.random() * 0.14})`; g.fillRect(Math.random() * 128, Math.random() * 128, 2 + Math.random() * 9, 1 + Math.random() * 3); }
+  g.strokeStyle = 'rgba(70,120,190,0.45)'; g.lineWidth = 3; g.strokeRect(0, 0, 128, 128);
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
+  t.repeat.set(WALL_LEN / 16, WALL_H / 16);
+  return t;
+})();
+function makeWall(side) {
+  // quad in local space: z in [0, -WALL_LEN]; bottom follows the slope (y = z*S), top is WALL_H above it
+  const z0 = 0, z1 = -WALL_LEN;
+  const pos = new Float32Array([0, z0 * S, z0, 0, z1 * S, z1, 0, z1 * S + WALL_H, z1, 0, z0 * S + WALL_H, z0]);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), 2));
+  g.setIndex(side < 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2]);   // face the track
+  g.computeVertexNormals();
+  const w = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: wallTex, emissive: 0x8fb4da, emissiveIntensity: 0.55 }));
+  w.position.x = side * WALL_X;
+  scene.add(w);
+  return w;
+}
+const walls = [makeWall(-1), makeWall(1)];
+
 // track edge banks (soft shading band so the playable lane reads clearly)
 const lane = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_HALF * 2 + 2, GL),
   new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.0 }));
@@ -441,8 +486,8 @@ lane.visible = false;
 // distant mountains (ignore fog so they stay visible)
 const mountains = new THREE.Group();
 (function () {
-  const mm = new THREE.MeshBasicMaterial({ color: 0xbfd8ee, fog: false });
-  const cap = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+  const mm = new THREE.MeshBasicMaterial({ color: 0xbfd8ee, fog: false }); mm.defines = { NO_CURVE: '' };
+  const cap = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }); cap.defines = { NO_CURVE: '' };
   for (let i = 0; i < 11; i++) {
     const h = 200 + Math.random() * 160, r = h * (0.8 + Math.random() * 0.4);
     const x = (i - 5) * 260 + (Math.random() - 0.5) * 120, z = -(1100 + Math.random() * 200);
@@ -607,7 +652,7 @@ scene.add(sledModel);
 const blob = new THREE.Mesh(new THREE.CircleGeometry(1, 16), new THREE.MeshBasicMaterial({ color: 0x31517a, transparent: true, opacity: 0.25, depthWrite: false }));
 blob.scale.set(0.9, 1.5, 1); scene.add(blob);
 
-const shieldBubble = new THREE.Mesh(new THREE.SphereGeometry(1.6, 20, 14), new THREE.MeshBasicMaterial({ color: 0x4fe0ff, transparent: true, opacity: 0.28, depthWrite: false }));
+const shieldBubble = new THREE.Mesh(new THREE.SphereGeometry(1.6, 20, 14), new THREE.MeshBasicMaterial({ color: 0x4fe0ff, transparent: true, opacity: 0.28, depthWrite: false, side: THREE.BackSide }));
 sledModel.add(shieldBubble); shieldBubble.position.y = 1.0; shieldBubble.visible = false;
 const flame = new THREE.Mesh(new THREE.ConeGeometry(0.5, 2.6, 8), new THREE.MeshBasicMaterial({ color: 0xffa21f, transparent: true, opacity: 0.85 }));
 flame.rotation.x = -Math.PI / 2; flame.position.set(0, 0.7, 2.7); sledModel.add(flame); flame.visible = false;
@@ -633,7 +678,7 @@ function resetGame() {
     nextRow: 45, nextPower: 220, nextEdge: 0, nextMarker: 0, nextMtn: -60, spin: 0, camShake: 0, jumpBuf: 0 });
   el.effects.innerHTML = '';
   sledModel.rotation.set(0, 0, 0); sledModel.userData.rider.rotation.set(0, 0, 0);
-  sledModel.userData.rider.visible = true;
+  sledModel.userData.rider.visible = false;   // first person: no rider body in view
 }
 
 function startGame() {
@@ -664,27 +709,67 @@ function place(type, m, x, d, props) {
 
 function difficulty() { return Math.min(1, game.d / 4500); }
 
+// Collision footprints, in the obstacle's local XZ frame (before its y-rotation):
+//   {c:[x,z,r]} circle, {e:[x,z,a,b]} axis-aligned ellipse, {b:[x,z,hx,hz]} box.
 function spawnObstacle(kind, x, d, opts = {}) {
   const sc = opts.scale || 1;
+  const put = (m, shapes, props) => {
+    const o = place('obstacle', m, x, d, { shapes, rot: m.rotation.y, ...props });
+    o.reach = Math.max(...shapes.map(shapeReach));
+    return o;
+  };
   switch (kind) {
     case 'tree': {
       const t = buildTreeVar(rnd(1.0, 1.5) * sc);
-      return place('obstacle', t.g, x, d, { hx: t.extent * sc * 1.1, hz: t.extent * sc * 1.1, h: 12, name: 'tree' });
+      return put(t.g, [{ c: [0, 0, t.extent * sc * 0.85] }], { hx: t.extent * sc * 1.1, hz: t.extent * sc * 1.1, h: 12, name: 'tree' });
     }
-    case 'dead': return place('obstacle', buildDeadTree(), x, d, { hx: 0.9, hz: 0.9, h: 9, name: 'tree' });
-    case 'rock': { const s = rnd(1.0, 1.7); return place('obstacle', buildRock(s), x, d, { hx: 1.3 * s, hz: 1.1 * s, h: 1.5 * s, name: 'rock' }); }
-    case 'boulders': { const b = buildBoulders(); return place('obstacle', b.g, x, d, { hx: b.hx, hz: 1.6, h: 2.4, name: 'rock' }); }
-    case 'snowman': { const m = buildSnowman(); const s = rnd(0.9, 1.4); m.scale.setScalar(s); m.rotation.y = rnd(-0.6, 0.6); return place('obstacle', m, x, d, { hx: 0.9 * s, hz: 0.9 * s, h: 3.2 * s, name: 'snowman' }); }
-    case 'log': { const len = rnd(4, 8); const m = buildLog(len); m.rotation.y = rnd(-0.25, 0.25); return place('obstacle', m, x, d, { hx: len / 2, hz: 0.7, h: 1.1, name: 'log' }); }
-    case 'ice': return place('obstacle', buildIce(), x, d, { hx: 2.0, hz: 1.5, h: 4.5, name: 'ice' });
-    case 'stump': return place('obstacle', buildStump(), x, d, { hx: 0.8, hz: 0.8, h: 1.0, name: 'log' });
-    case 'mound': { const m = buildMound(); return place('obstacle', m, x, d, { hx: 1.9, hz: 1.5, h: 1.0, name: 'snowman' }); }
-    case 'igloo': { const m = buildIgloo(); m.rotation.y = rnd(-0.5, 0.5); return place('obstacle', m, x, d, { hx: 2.4, hz: 2.4, h: 4.8, name: 'snowman' }); }
-    case 'stack': return place('obstacle', buildLogStack(), x, d, { hx: 2.0, hz: 2.2, h: 2.8, name: 'log' });
-    case 'cabin': return place('obstacle', buildCabin(), x, d, { hx: 2.7, hz: 2.5, h: 8, name: 'log' });
-    case 'fence': { const len = opts.len || rnd(6, 10); const m = buildFence(len); m.rotation.y = opts.rot || rnd(-0.15, 0.15); return place('obstacle', m, x, d, { hx: len / 2, hz: 0.4, h: 1.9, name: 'log' }); }
+    case 'dead': return put(buildDeadTree(), [{ c: [0, 0, 0.8] }], { hx: 0.9, hz: 0.9, h: 9, name: 'tree' });
+    case 'rock': { const s = rnd(1.0, 1.7); return put(buildRock(s), [{ e: [0, 0, 1.35 * s, 1.15 * s] }], { hx: 1.3 * s, hz: 1.1 * s, h: 1.5 * s, name: 'rock' }); }
+    case 'boulders': { const b = buildBoulders(); return put(b.g, b.shapes, { hx: b.hx, hz: 1.6, h: 2.4, name: 'rock' }); }
+    case 'snowman': { const m = buildSnowman(); const s = rnd(0.9, 1.4); m.scale.setScalar(s); m.rotation.y = rnd(-0.6, 0.6); return put(m, [{ c: [0, 0, 0.8 * s] }], { hx: 0.9 * s, hz: 0.9 * s, h: 3.2 * s, name: 'snowman' }); }
+    case 'log': { const len = rnd(4, 8); const m = buildLog(len); m.rotation.y = rnd(-0.25, 0.25); return put(m, [{ b: [0, 0, len / 2 + 0.05, 0.5] }], { hx: len / 2, hz: 0.7, h: 1.1, name: 'log' }); }
+    case 'ice': return put(buildIce(), [{ c: [-1.1, 0, 1.15] }, { c: [0, 0, 1.2] }, { c: [1.1, 0, 1.15] }], { hx: 2.0, hz: 1.5, h: 4.5, name: 'ice' });
+    case 'stump': return put(buildStump(), [{ c: [0, 0, 0.72] }], { hx: 0.8, hz: 0.8, h: 1.0, name: 'log' });
+    case 'mound': { const m = buildMound(); const [a, b] = m.userData.ellipse; return put(m, [{ e: [0, 0, a, b] }], { hx: 1.9, hz: 1.5, h: 1.0, name: 'snowman' }); }
+    case 'igloo': { const m = buildIgloo(); m.rotation.y = rnd(-0.5, 0.5); return put(m, [{ c: [0, 0, 2.3] }, { c: [0, -1.9, 0.9] }], { hx: 2.4, hz: 2.4, h: 4.8, name: 'snowman' }); }
+    case 'stack': return put(buildLogStack(), [{ b: [0, 0, 1.6, 2.05] }], { hx: 2.0, hz: 2.2, h: 2.8, name: 'log' });
+    case 'cabin': return put(buildCabin(), [{ b: [0, 0, 2.3, 2.1] }], { hx: 2.7, hz: 2.5, h: 8, name: 'log' });
+    case 'fence': { const len = opts.len || rnd(6, 10); const m = buildFence(len); m.rotation.y = opts.rot || rnd(-0.15, 0.15); return put(m, [{ b: [0, 0, len / 2 + 0.1, 0.25] }], { hx: len / 2, hz: 0.4, h: 1.9, name: 'log' }); }
   }
 }
+
+function shapeReach(s) {
+  if (s.c) return Math.hypot(s.c[0], s.c[1]) + s.c[2];
+  if (s.e) return Math.hypot(s.e[0], s.e[1]) + Math.max(s.e[2], s.e[3]);
+  return Math.hypot(s.b[0], s.b[1]) + Math.hypot(s.b[2], s.b[3]);
+}
+
+// Does a circle (world x,z,r) touch obstacle o's actual footprint?
+function circleHitsObstacle(o, wx, wz, r) {
+  const dx = wx - o.x, dz = wz - o.z;
+  const cs = Math.cos(o.rot), sn = Math.sin(o.rot);
+  const lx = dx * cs - dz * sn, lz = dx * sn + dz * cs;     // inverse of three's rotation.y
+  for (const s of o.shapes) {
+    if (s.c) {
+      if (Math.hypot(lx - s.c[0], lz - s.c[1]) < s.c[2] + r) return true;
+    } else if (s.e) {
+      const u = (lx - s.e[0]) / (s.e[2] + r), v = (lz - s.e[1]) / (s.e[3] + r);
+      if (u * u + v * v < 1) return true;
+    } else {
+      const qx = Math.max(-s.b[2], Math.min(s.b[2], lx - s.b[0])), qz = Math.max(-s.b[3], Math.min(s.b[3], lz - s.b[1]));
+      if (Math.hypot(lx - s.b[0] - qx, lz - s.b[1] - qz) < r) return true;
+    }
+  }
+  return false;
+}
+
+// The sled is two circles along its length.
+const SLED_OFFS = [-0.45, 0.45];
+function sledHits(o, px, pz) {
+  for (const oz of SLED_OFFS) if (circleHitsObstacle(o, px, pz + oz, SLED_R)) return true;
+  return false;
+}
+window.__hit = (o, px, pz) => sledHits(o, px, pz);
 
 function spawnRamp(x, d) {
   const m = buildRamp(6, 7, 1.9);
@@ -735,20 +820,20 @@ const clampX = (x, m = 1.2) => THREE.MathUtils.clamp(x, -TRACK_HALF + m, TRACK_H
 
 // 1) scattered mixed field
 function patScatter(d, diff) {
-  const count = Math.min(6, 2 + Math.floor(rnd(0, 2 + diff * 3)));
+  const count = Math.min(4, 1 + Math.floor(rnd(0, 2 + diff * 2)));
   const slots = []; let tries = 0;
   while (slots.length < count && tries++ < 30) {
     const x = rnd(-TRACK_HALF + 1.5, TRACK_HALF - 1.5);
-    if (slots.every((s) => Math.abs(s - x) > 6)) slots.push(x);
+    if (slots.every((s) => Math.abs(s - x) > 8)) slots.push(x);
   }
   const ks = kindsFor(diff);
   for (const x of slots) spawnObstacle(pick(ks), x, d + rnd(-4, 4));
   if (Math.random() < 0.5) spawnGift(clampX(rnd(-12, 12)), d + 6);
-  return d + rnd(13, 18) - diff * 4;
+  return d + rnd(20, 28) - diff * 4;
 }
 // 2) wall with a gap (trees / fence / boulders)
 function patWall(d, diff) {
-  const gapW = 9 - diff * 2.5, gapX = rnd(-TRACK_HALF + gapW / 2 + 2, TRACK_HALF - gapW / 2 - 2);
+  const gapW = 12 - diff * 3, gapX = rnd(-TRACK_HALF + gapW / 2 + 2, TRACK_HALF - gapW / 2 - 2);
   const style = pick(['tree', 'fence', 'boulders', 'mixed']);
   for (let x = -TRACK_HALF + 2; x <= TRACK_HALF - 1; x += 4.4) {
     if (Math.abs(x - gapX) < gapW / 2) continue;
@@ -760,49 +845,49 @@ function patWall(d, diff) {
     if (hi - lo > 3) spawnObstacle('fence', (lo + hi) / 2, d, { len: hi - lo, rot: 0 });
   }
   spawnGift(gapX, d + 3); spawnGift(gapX, d + 6);
-  return d + rnd(18, 22);
+  return d + rnd(28, 34);
 }
 // 3) slalom: alternating big obstacles
 function patSlalom(d, diff) {
-  const n = 4 + Math.floor(rnd(0, 3)); let side = Math.random() < 0.5 ? -1 : 1;
+  const n = 3 + Math.floor(rnd(0, 3)); let side = Math.random() < 0.5 ? -1 : 1;
   const k = pick(['boulders', 'ice', 'tree', 'igloo', 'stack']);
   for (let i = 0; i < n; i++) {
     const x = clampX(side * rnd(3, 8) + rnd(-1.5, 1.5), 2.5);
-    spawnObstacle(k, x, d + i * (11 - diff * 2));
-    spawnGift(-side * rnd(4, 8), d + i * (11 - diff * 2) + 5);
+    spawnObstacle(k, x, d + i * (16 - diff * 3));
+    spawnGift(-side * rnd(4, 8), d + i * (16 - diff * 3) + 5);
     side = -side;
   }
-  return d + n * (11 - diff * 2) + 6;
+  return d + n * (16 - diff * 3) + 6;
 }
 // 4) corridor between two tree lines that meanders
 function patCorridor(d, diff) {
-  const len = 60 + Math.floor(rnd(0, 30)); let c = rnd(-6, 6); const w = 6.2 - diff * 1.0;
-  for (let t = 0; t < len; t += 5.5) {
+  const len = 60 + Math.floor(rnd(0, 30)); let c = rnd(-6, 6); const w = 8.5 - diff * 1.5;
+  for (let t = 0; t < len; t += 7.5) {
     c = THREE.MathUtils.clamp(c + rnd(-3.2, 3.2), -TRACK_HALF + w + 2, TRACK_HALF - w - 2);
     spawnObstacle(Math.random() < 0.7 ? 'tree' : pick(['rock', 'ice', 'dead']), c - w - rnd(0, 1.5), d + t);
     spawnObstacle(Math.random() < 0.7 ? 'tree' : pick(['rock', 'ice', 'dead']), c + w + rnd(0, 1.5), d + t + rnd(0, 2));
     if (Math.random() < 0.35) spawnGift(c, d + t + 2.5);
-    if (Math.random() < 0.15 + diff * 0.15) spawnObstacle(pick(['stump', 'log', 'mound']), c + rnd(-1.5, 1.5), d + t + 3);
+    if (Math.random() < 0.08 + diff * 0.1) spawnObstacle(pick(['stump', 'log', 'mound']), c + rnd(-1.5, 1.5), d + t + 3);
   }
   return d + len + 10;
 }
 // 5) diagonal line with gaps + cabin / igloo landmark
 function patDiagonal(d, diff) {
-  const dir = Math.random() < 0.5 ? 1 : -1; const n = 6;
+  const dir = Math.random() < 0.5 ? 1 : -1; const n = 5;
   for (let i = 0; i < n; i++) {
-    const x = clampX(-dir * 12 + dir * i * 4.8, 1.5);
-    spawnObstacle(pick(['rock', 'tree', 'boulders', 'ice', 'dead']), x, d + i * 5);
+    const x = clampX(-dir * 12 + dir * i * 6, 1.5);
+    spawnObstacle(pick(['rock', 'tree', 'boulders', 'ice', 'dead']), x, d + i * 8);
   }
-  if (Math.random() < 0.6) spawnObstacle(pick(['cabin', 'igloo', 'stack']), clampX(dir * rnd(2, 10), 3), d + 6 * 5 + 8);
-  return d + 48;
+  if (Math.random() < 0.6) spawnObstacle(pick(['cabin', 'igloo', 'stack']), clampX(dir * rnd(2, 10), 3), d + 5 * 8 + 10);
+  return d + 58;
 }
 // 6) dense forest patch with a winding path
 function patForest(d, diff) {
   const len = 36; let c = rnd(-7, 7);
-  for (let t = 0; t < len; t += 3.6) {
+  for (let t = 0; t < len; t += 5) {
     c = THREE.MathUtils.clamp(c + rnd(-2.2, 2.2), -9, 9);
-    for (let x = -TRACK_HALF + 1.5; x <= TRACK_HALF - 1; x += rnd(3.4, 5)) {
-      if (Math.abs(x - c) < 4.6 - diff) continue;
+    for (let x = -TRACK_HALF + 1.5; x <= TRACK_HALF - 1; x += rnd(4.5, 6)) {
+      if (Math.abs(x - c) < 6.5 - diff * 1.5) continue;
       spawnObstacle(Math.random() < 0.8 ? 'tree' : 'dead', x + rnd(-0.6, 0.6), d + t + rnd(-1.2, 1.2));
     }
     if (Math.random() < 0.4) spawnGift(c, d + t + 1.8);
@@ -833,7 +918,7 @@ function spawnRow(d) {
   let r = Math.random() * tot, chosen = pats[0];
   for (const p of pats) { if (p[0] === lastPat) continue; r -= p[1]; if (r <= 0) { chosen = p; break; } }
   lastPat = chosen[0];
-  return chosen[2](d, diff);
+  return chosen[2](d, diff) + rnd(8, 14) * (1 - diff * 0.5);   // breathing room between patterns
 }
 
 function spawnEdge(d) {
@@ -935,7 +1020,7 @@ function update(dt) {
 
   if (game.state === 'play') {
     // speed
-    let target = Math.min(26 + game.d * 0.0075, 46);
+    let target = Math.min(26 + game.score * 0.008, 46);   // ramps up with score
     if (has('turbo')) target *= 1.55;
     if (has('slow')) target *= 0.6;
     game.speed += (target - game.speed) * (1 - Math.exp(-2.2 * dt));
@@ -992,7 +1077,7 @@ function update(dt) {
     game.deadT += dt;
     const c = game.crashVel;
     game.d += game.speed * dt * Math.max(0, 1 - game.deadT * 1.6) * 0.5;
-    game.x = THREE.MathUtils.clamp(game.x + c.x * dt, -TRACK_HALF - 4, TRACK_HALF + 4);
+    game.x = THREE.MathUtils.clamp(game.x + c.x * dt, -TRACK_HALF, TRACK_HALF);
     c.vy -= GRAVITY * dt; game.yOff = Math.max(0, game.yOff + c.vy * dt);
     if (game.yOff === 0 && c.vy < 0) c.vy = Math.abs(c.vy) * 0.35;
     game.spin += c.spin * dt * Math.max(0.1, 1 - game.deadT * 0.8);
@@ -1070,6 +1155,10 @@ function update(dt) {
   }
   flakeGeo.attributes.position.needsUpdate = true;
 
+  // walls follow the player in z (their geometry is a vertical sheet over the sloped ground)
+  const wz = zz + 60;
+  for (const w of walls) { w.position.z = wz; w.position.y = groundY(wz); }
+  wallTex.offset.x = (game.d / 16) % 1;
   // ground follows player
   const gz = zz - 150;
   ground.position.set(0, groundY(gz), gz);
@@ -1088,7 +1177,7 @@ function update(dt) {
 }
 
 function collide(z) {
-  const px = game.x, pz = z, sHX = 0.6, sHZ = 1.0;
+  const px = game.x, pz = z;
   const magnet = has('magnet');
   for (let i = objects.length - 1; i >= 0; i--) {
     const o = objects[i];
@@ -1126,7 +1215,7 @@ function collide(z) {
     }
     if (o.type === 'obstacle') {
       if (game.yOff > o.h - 0.1 && !game.ramp) continue;
-      if (Math.abs(o.x - px) < o.hx + sHX && Math.abs(o.z - pz) < o.hz + sHZ) {
+      if (Math.hypot(o.x - px, o.z - pz) < o.reach + 2 && sledHits(o, px, pz)) {
         if (has('turbo')) { smash(o, i); continue; }
         if (game.invuln > 0) continue;
         if (has('shield')) {
@@ -1157,27 +1246,25 @@ function smash(o, idx, silent) {
 const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
 let camInit = false;
 function updateCamera(dt) {
+  // first person: eyes on the rider's head, looking down the slope
   const z = -game.d;
-  const back = 5.6, up = 2.3;
-  const cz = z + back;
-  const tx = game.x * 0.72;
-  const ty = groundY(cz) + up + game.yOff * 0.55;
-  if (!camInit) { camPos.set(tx, ty, cz); camInit = true; }
-  const k = 1 - Math.exp(-8 * dt);
-  camPos.x += (tx - camPos.x) * k;
-  camPos.y += (ty - camPos.y) * (1 - Math.exp(-10 * dt));
-  camPos.z = cz;
+  const dead = game.state === 'dead';
+  const eyeZ = z - 0.25;
+  const ty = groundY(eyeZ) + 1.45 + game.yOff;
+  if (!camInit) { camPos.set(game.x, ty, eyeZ); camInit = true; }
+  camPos.set(game.x, ty, eyeZ);
   camera.position.copy(camPos);
   if (game.camShake > 0) {
     game.camShake = Math.max(0, game.camShake - dt * 2.5);
-    camera.position.x += (Math.random() - 0.5) * game.camShake * 0.8;
-    camera.position.y += (Math.random() - 0.5) * game.camShake * 0.8;
+    camera.position.x += (Math.random() - 0.5) * game.camShake * 0.5;
+    camera.position.y += (Math.random() - 0.5) * game.camShake * 0.5;
   }
-  const lz = z - 14;
-  camLook.set(game.x * 0.9, groundY(lz) + 1.9 + game.yOff * 0.3, lz);
+  const lz = eyeZ - 30;
+  const lookY = groundY(lz) + 1.45 + game.yOff * 0.7 + (game.vy || 0) * -0.05;
+  camLook.set(game.x + game.vx * 0.25, lookY, lz);
   camera.lookAt(camLook);
-  camera.rotation.z = -game.vx * 0.004;
-  const fovT = 74 + (game.speed - 26) * 0.5 + (has('turbo') ? 8 : 0);
+  camera.rotation.z = -game.vx * 0.006 + (dead ? game.spin * 0.35 : 0);
+  const fovT = 78 + (game.speed - 26) * 0.5 + (has('turbo') ? 8 : 0);
   game.fov += (fovT - game.fov) * (1 - Math.exp(-4 * dt));
   if (Math.abs(camera.fov - game.fov) > 0.05) { camera.fov = game.fov; camera.updateProjectionMatrix(); }
 
@@ -1195,5 +1282,6 @@ function frame(now) {
   update(dt);
   renderer.render(scene, camera);
 }
+window.__test = { spawnObstacle, clearWorld, startGame, sledHits, camera, walls, CURVE, TRACK_HALF, WALL_X };
 resetGame(); game.state = 'menu'; game.menuInit = true; game.speed = 22;
 requestAnimationFrame(frame);
