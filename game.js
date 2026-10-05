@@ -9,6 +9,7 @@ const S = Math.tan(SLOPE_ANGLE);           // ground height = z * S
 const groundY = (z) => z * S;
 const TRACK_HALF = 15.5;                   // playable half width
 const GRAVITY = 46;
+const JUMP_V = 18;
 const SPAWN_AHEAD = 240;
 const CULL_BEHIND = 30;
 
@@ -24,7 +25,7 @@ const POW_KEYS = Object.keys(POW);
 /* ---------------- renderer / scene ---------------- */
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
@@ -209,6 +210,39 @@ function buildSled() {
 }
 
 
+
+/* ---------------- geometry baking: one draw call per object ---------------- */
+const matBaked = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+const _c = new THREE.Color();
+function bake(root) {
+  root.updateMatrixWorld(true);
+  const pos = [], col = [];
+  root.traverse((o) => {
+    if (!o.isMesh || o.isSprite) return;
+    const src = o.geometry;
+    const g = src.index ? src.toNonIndexed() : src.clone();
+    g.applyMatrix4(o.matrixWorld);
+    const p = g.attributes.position, ca = g.attributes.color;
+    const base = o.material.color || _c.set(0xffffff);
+    for (let i = 0; i < p.count; i++) {
+      pos.push(p.getX(i), p.getY(i), p.getZ(i));
+      if (ca) col.push(ca.getX(i), ca.getY(i), ca.getZ(i)); else col.push(base.r, base.g, base.b);
+    }
+    g.dispose();
+    if (src.userData.unique) src.dispose();
+  });
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geom.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geom.computeVertexNormals();
+  geom.userData.baked = true;
+  return new THREE.Mesh(geom, matBaked);
+}
+function removeObj(o) {
+  world.remove(o.mesh);
+  if (o.mesh.geometry && o.mesh.geometry.userData.baked) o.mesh.geometry.dispose();
+}
+
 /* ---------------- extra procedural models ---------------- */
 const matIce = new THREE.MeshLambertMaterial({ color: 0x9fe4ff, emissive: 0x2a7fb0, emissiveIntensity: 0.5, flatShading: true, transparent: true, opacity: 0.92 });
 const matSpruce = M(0x27586a), matSpruce2 = M(0x3a7a52), matDead = M(0x4a3b32), matRoof = M(0x8a3a2c), matStone = M(0x9aa3ad);
@@ -346,7 +380,7 @@ function buildMountain(h, r) {
     col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  g.computeVertexNormals();
+  g.computeVertexNormals(); g.userData.unique = true;
   const m = new THREE.Mesh(g, matMountain);
   m.position.y = h / 2 - h * 0.12;
   const grp = new THREE.Group(); grp.add(m);
@@ -361,7 +395,7 @@ function buildMountain(h, r) {
       if (t > snowLine + 0.1) c.copy(white); else c.copy(rockB).lerp(rockA, Math.random());
       c2[i * 3] = c.r; c2[i * 3 + 1] = c.g; c2[i * 3 + 2] = c.b;
     }
-    g2.setAttribute('color', new THREE.BufferAttribute(c2, 3)); g2.computeVertexNormals();
+    g2.setAttribute('color', new THREE.BufferAttribute(c2, 3)); g2.computeVertexNormals(); g2.userData.unique = true;
     const m2 = new THREE.Mesh(g2, matMountain);
     const a = Math.random() * 6.28;
     m2.position.set(Math.cos(a) * r * 0.75, h2 / 2 - h2 * 0.12, Math.sin(a) * r * 0.75);
@@ -530,6 +564,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
   else if (e.code === 'KeyM') toggleMute();
   else if ((e.code === 'Space' || e.code === 'Enter') && (game.state === 'menu' || game.state === 'over')) startGame();
+  else if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) game.jumpBuf = 0.16;
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => { keys.clear(); touchDir = 0; if (game.state === 'play') togglePause(true); });
@@ -561,6 +596,8 @@ $('btnAgain').onclick = () => { ensureAudio(); startGame(); };
 $('btnPause').onclick = () => togglePause();
 $('btnResume').onclick = () => togglePause();
 $('btnMute').onclick = toggleMute;
+const jb = $('btnJump');
+jb.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); ensureAudio(); game.jumpBuf = 0.16; });
 function toggleMute() { muted = !muted; $('btnMute').style.opacity = muted ? 0.45 : 1; try { localStorage.setItem('snorwider-muted', muted ? '1' : '0'); } catch (e) { /* ignore */ } }
 $('btnMute').style.opacity = muted ? 0.45 : 1;
 
@@ -582,17 +619,18 @@ let objects = [];   // {type, mesh, x, z, hx, hz, h, ...}
 
 const game = {
   state: 'menu', t: 0, d: 0, x: 0, vx: 0, speed: 0, yOff: 0, vy: 0, ramp: null,
-  score: 0, gifts: 0, effects: {}, invuln: 0, deadT: 0, nextRow: 0, nextPower: 0, nextEdge: 0, nextMarker: 0, nextMtn: -60, spin: 0, camShake: 0, fov: 74,
+  score: 0, gifts: 0, effects: {}, invuln: 0, deadT: 0, nextRow: 0, nextPower: 0, nextEdge: 0, nextMarker: 0, nextMtn: -60, spin: 0, camShake: 0, fov: 74, jumpBuf: 0,
 };
 window.snorwider = game; // handy for debugging
 window.__objs = () => objects;
+window.__info = () => ({ calls: renderer.info.render.calls, tris: renderer.info.render.triangles, geoms: renderer.info.memory.geometries, objs: objects.length });
 
-function clearWorld() { for (const o of objects) world.remove(o.mesh); objects = []; }
+function clearWorld() { for (const o of objects) removeObj(o); objects = []; }
 
 function resetGame() {
   clearWorld();
   Object.assign(game, { t: 0, d: 0, x: 0, vx: 0, speed: 26, yOff: 0, vy: 0, ramp: null, score: 0, gifts: 0, effects: {}, invuln: 0, deadT: 0,
-    nextRow: 45, nextPower: 220, nextEdge: 0, nextMarker: 0, nextMtn: -60, spin: 0, camShake: 0 });
+    nextRow: 45, nextPower: 220, nextEdge: 0, nextMarker: 0, nextMtn: -60, spin: 0, camShake: 0, jumpBuf: 0 });
   el.effects.innerHTML = '';
   sledModel.rotation.set(0, 0, 0); sledModel.userData.rider.rotation.set(0, 0, 0);
   sledModel.userData.rider.visible = true;
@@ -602,7 +640,7 @@ function startGame() {
   resetGame();
   game.state = 'play';
   for (const k of ['menu', 'over', 'pause']) el[k].classList.add('hidden');
-  el.hud.classList.remove('hidden'); el.speedbar.classList.remove('hidden');
+  el.hud.classList.remove('hidden'); el.speedbar.classList.remove('hidden'); jb.classList.remove('hidden');
 }
 
 function togglePause(forcePause) {
@@ -616,6 +654,7 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 function place(type, m, x, d, props) {
   const z = -d;
+  if (type !== 'power') m = bake(m);
   m.position.set(x, groundY(z), z);
   world.add(m);
   const o = { type, mesh: m, x, z, hx: 1, hz: 1, h: 2, ...props };
@@ -659,7 +698,7 @@ function spawnRamp(x, d) {
 function spawnGift(x, d, rel = 1.0) {
   const m = buildGift(Math.floor(Math.random() * 4));
   const o = place('gift', m, x, d, { hx: 0.8, hz: 0.8, rel });
-  m.position.y = groundY(-d) + rel;
+  o.mesh.position.y = groundY(-d) + rel;
   return o;
 }
 
@@ -913,6 +952,14 @@ function update(dt) {
     game.d += game.speed * dt;
     addScore((game.d - prevD) * 0.12);
 
+    // jump (buffered so a press just before landing still counts)
+    if (game.jumpBuf > 0) {
+      game.jumpBuf -= dt;
+      if (game.yOff <= 0.05 && !game.ramp && game.vy <= 0) {
+        game.vy = JUMP_V; game.yOff = 0.06; game.jumpBuf = 0; sfx.jump();
+        fx.burst(game.x, groundY(-game.d) + 0.3, -game.d + 0.5, 10, 4, 0xffffff, 0.5);
+      }
+    }
     // vertical
     const z = -game.d;
     if (game.ramp) {
@@ -962,7 +1009,7 @@ function update(dt) {
   const z = -game.d;
   for (let i = objects.length - 1; i >= 0; i--) {
     const o = objects[i];
-    if (o.z > z + (o.cull || CULL_BEHIND)) { world.remove(o.mesh); objects.splice(i, 1); continue; }
+    if (o.z > z + (o.cull || CULL_BEHIND)) { removeObj(o); objects.splice(i, 1); continue; }
     if (o.type === 'gift') { o.mesh.rotation.y += dt * 2.2; o.mesh.position.y = groundY(o.mesh.position.z) + o.rel + Math.sin(game.t * 3 + o.x) * 0.15; }
     else if (o.type === 'power') {
       o.core.rotation.y += dt * 2.5; o.orb.scale.setScalar(1 + Math.sin(game.t * 4) * 0.06);
@@ -970,7 +1017,7 @@ function update(dt) {
     } else if (o.type === 'broken') {
       o.vy -= 30 * dt; o.mesh.position.x += o.vx * dt; o.mesh.position.y += o.vy * dt; o.mesh.position.z += o.vz * dt;
       o.mesh.rotation.x += o.vz * dt * 0.2; o.mesh.rotation.z += o.vx * dt * 0.2;
-      o.t -= dt; if (o.t <= 0) { world.remove(o.mesh); objects.splice(i, 1); }
+      o.t -= dt; if (o.t <= 0) { removeObj(o); objects.splice(i, 1); }
     }
   }
 
@@ -1060,14 +1107,14 @@ function collide(z) {
       if (Math.abs(o.x - px) < 1.4 && Math.abs(o.z - pz) < 1.6 && Math.abs((game.yOff + 0.9) - o.rel) < 2.0) {
         game.gifts++; addScore(50); sfx.gift();
         fx.burst(o.x, o.mesh.position.y, o.z, 14, 6, 0xffd23f, 0.6);
-        world.remove(o.mesh); objects.splice(i, 1);
+        removeObj(o); objects.splice(i, 1);
       }
       continue;
     }
     if (o.type === 'power') {
       if (Math.abs(o.x - px) < o.hx + 0.6 && Math.abs(o.z - pz) < o.hz + 1.0 && Math.abs((game.yOff + 0.9) - o.rel) < 2.2) {
         activate(o.key); addScore(100);
-        world.remove(o.mesh); objects.splice(i, 1);
+        removeObj(o); objects.splice(i, 1);
       }
       continue;
     }

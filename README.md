@@ -4,7 +4,7 @@ An endless 3D sledding game that runs entirely in the browser (three.js, no buil
 All models are original low-poly assets built from primitives in code.
 
 ## Controls
-- **← / → or A / D** steer (touch: hold left/right side of the screen)
+- **← / → or A / D** steer, **Space / ↑ / W** jump (touch: hold left/right side, JUMP button)
 - **P / Esc** pause, **M** mute, **Space / Enter** start or restart
 
 ## Gameplay

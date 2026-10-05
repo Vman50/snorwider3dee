@@ -40,3 +40,7 @@ h2 { margin:0 0 10px; font-size:40px; color:var(--accent); font-weight:900; }
 #newBest { color:#e8a000; font-weight:900; margin:0 0 12px; animation:pop .5s ease-out; }
 
 @media (max-width:560px) { .stat { min-width:0; padding:4px 9px; } .stat span:last-child { font-size:16px; } #hud { gap:6px; padding:8px; } #effects { top:64px; } }
+
+#btnJump { position:fixed; right:18px; bottom:28px; width:92px; height:92px; border-radius:50%; border:0; background:rgba(255,90,60,.9); color:#fff; font-weight:900; font-size:18px; font-family:inherit; letter-spacing:.06em; box-shadow:0 5px 0 #b83a22; touch-action:none; cursor:pointer; }
+#btnJump:active { transform:translateY(3px); box-shadow:0 2px 0 #b83a22; }
+@media (pointer:fine) { #btnJump { display:none; } }
