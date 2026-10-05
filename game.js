@@ -9,7 +9,7 @@ const S = Math.tan(SLOPE_ANGLE);           // ground height = z * S
 const groundY = (z) => z * S;
 const TRACK_HALF = 15.5;                   // playable half width
 const GRAVITY = 46;
-const SPAWN_AHEAD = 190;
+const SPAWN_AHEAD = 240;
 const CULL_BEHIND = 30;
 
 const POW = {
@@ -29,7 +29,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
 const FOG = new THREE.Color(0xd3e8f8);
-scene.fog = new THREE.Fog(FOG, 70, 230);
+scene.fog = new THREE.Fog(FOG, 90, 340);
 
 (function makeSky() {
   const c = document.createElement('canvas'); c.width = 4; c.height = 256;
@@ -41,7 +41,7 @@ scene.fog = new THREE.Fog(FOG, 70, 230);
   scene.background = t;
 })();
 
-const camera = new THREE.PerspectiveCamera(62, 1, 0.1, 2500);
+const camera = new THREE.PerspectiveCamera(74, 1, 0.1, 2500);
 const hemi = new THREE.HemisphereLight(0xdcecff, 0x9fb4c9, 1.05);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff3dd, 1.5);
@@ -208,6 +208,168 @@ function buildSled() {
   return g;
 }
 
+
+/* ---------------- extra procedural models ---------------- */
+const matIce = new THREE.MeshLambertMaterial({ color: 0x9fe4ff, emissive: 0x2a7fb0, emissiveIntensity: 0.5, flatShading: true, transparent: true, opacity: 0.92 });
+const matSpruce = M(0x27586a), matSpruce2 = M(0x3a7a52), matDead = M(0x4a3b32), matRoof = M(0x8a3a2c), matStone = M(0x9aa3ad);
+
+function buildTreeVar(scale = 1) {
+  const g = new THREE.Group();
+  const kind = pick(['tall', 'fat', 'spruce', 'twin']);
+  g.add(mesh(geo.trunk, mat.trunk, 0, 0.8, 0));
+  let tiers;
+  if (kind === 'tall') tiers = [[1.9, 3.2, 2.6], [1.6, 3.0, 4.4], [1.3, 2.8, 6.1], [0.9, 2.4, 7.7], [0.55, 1.8, 9.0]];
+  else if (kind === 'fat') tiers = [[3.4, 3.0, 2.4], [2.6, 2.8, 3.9]];
+  else if (kind === 'spruce') tiers = [[2.2, 2.6, 2.2], [1.8, 2.4, 3.6], [1.4, 2.2, 4.9], [1.0, 2.0, 6.0]];
+  else tiers = [[2.4, 3.2, 2.8], [1.8, 2.8, 4.5], [1.2, 2.4, 6.0]];
+  const m1 = kind === 'spruce' ? matSpruce : mat.green, m2 = kind === 'spruce' ? matSpruce2 : mat.green2;
+  tiers.forEach(([r, h, y], i) => {
+    g.add(mesh(geo.cone, i % 2 ? m2 : m1, 0, y, 0, r, h, r));
+    g.add(mesh(geo.cone, mat.snow, 0, y + h / 2 - 0.3 * h, 0, r * 0.62, h * 0.6, r * 0.62));
+  });
+  if (kind === 'twin') { const t2 = buildTree(0.7); t2.position.set(2.2, 0, 1.0); g.add(t2); }
+  g.rotation.y = Math.random() * 6;
+  g.scale.set(scale * rnd(0.9, 1.15), scale * rnd(0.9, 1.25), scale * rnd(0.9, 1.15));
+  return { g, kind, extent: kind === 'fat' ? 1.9 : kind === 'twin' ? 2.2 : 1.35 };
+}
+
+function buildDeadTree() {
+  const g = new THREE.Group();
+  const h = rnd(5, 8);
+  const trunk = mesh(geo.cyl, matDead, 0, h / 2, 0, 0.35, h, 0.35); g.add(trunk);
+  const nb = 3 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < nb; i++) {
+    const len = rnd(1.6, 3.2), a = Math.random() * 6.28, y = rnd(h * 0.35, h * 0.95);
+    const br = mesh(geo.cyl, matDead, Math.cos(a) * len * 0.35, y + len * 0.2, Math.sin(a) * len * 0.35, 0.12, len, 0.12);
+    br.rotation.set(Math.sin(a) * 1.0, 0, -Math.cos(a) * 1.0);
+    g.add(br);
+    g.add(mesh(geo.box, mat.snow, Math.cos(a) * len * 0.35, y + len * 0.45, Math.sin(a) * len * 0.35, 0.28, 0.08, 0.28));
+  }
+  g.add(mesh(geo.cyl, mat.snow, 0, 0.1, 0, 0.9, 0.3, 0.9));
+  return g;
+}
+
+function buildBoulders() {
+  const g = new THREE.Group();
+  const n = 2 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < n; i++) {
+    const r = buildRock(rnd(0.7, 1.6));
+    r.position.set((i - (n - 1) / 2) * 2.2 + rnd(-0.4, 0.4), 0, rnd(-0.8, 0.8));
+    r.rotation.y = Math.random() * 6; g.add(r);
+  }
+  return { g, hx: n * 1.15 + 0.4 };
+}
+
+function buildIce() {
+  const g = new THREE.Group();
+  const n = 4 + Math.floor(Math.random() * 4);
+  for (let i = 0; i < n; i++) {
+    const h = rnd(1.6, 4.2), r = rnd(0.35, 0.8);
+    const c = mesh(geo.cone, matIce, rnd(-1.6, 1.6), h / 2, rnd(-1.0, 1.0), r, h, r);
+    c.rotation.set(rnd(-0.25, 0.25), Math.random() * 6, rnd(-0.25, 0.25)); g.add(c);
+  }
+  g.add(mesh(geo.cyl, mat.snow, 0, 0.05, 0, 2.2, 0.2, 1.7));
+  return g;
+}
+
+function buildStump() {
+  const g = new THREE.Group();
+  g.add(mesh(geo.cyl, mat.trunk, 0, 0.45, 0, 0.7, 0.9, 0.7));
+  g.add(mesh(geo.cyl, mat.logCut, 0, 0.92, 0, 0.6, 0.06, 0.6));
+  g.add(mesh(geo.cyl, mat.snow, 0, 0.98, 0, 0.5, 0.1, 0.5));
+  return g;
+}
+
+function buildMound() {
+  const g = new THREE.Group();
+  g.add(mesh(geo.sphere, mat.snow, 0, 0, 0, rnd(1.8, 2.8), rnd(0.8, 1.1), rnd(1.4, 2.2)));
+  return g;
+}
+
+function buildIgloo() {
+  const g = new THREE.Group();
+  const dome = mesh(geo.sphere, mat.white, 0, 0, 0, 2.3, 2.3, 2.3); g.add(dome);
+  const door = mesh(geo.cyl, mat.coal, 0, 0.7, -2.0, 0.7, 1.2, 0.5); door.rotation.x = Math.PI / 2; g.add(door);
+  g.add(mesh(geo.cyl, mat.white, 0, 0.5, -1.9, 0.9, 1.0, 0.9)).children;
+  for (let i = 0; i < 3; i++) g.add(mesh(geo.box, matIce, Math.cos(i * 2.1) * 1.9, 1.2 + i * 0.2, Math.sin(i * 2.1) * 1.9, 0.5, 0.15, 0.5));
+  return g;
+}
+
+function buildLogStack() {
+  const g = new THREE.Group();
+  const rows = [[-0.7, 0.45, 3], [0.7, 0.45, 3], [0, 1.25, 3]];
+  for (const [x, y] of [[-1.1, 0.5], [0, 0.5], [1.1, 0.5], [-0.55, 1.35], [0.55, 1.35], [0, 2.2]]) {
+    const l = mesh(geo.cyl, mat.trunk, x, y, 0, 0.5, 4, 0.5); l.rotation.x = Math.PI / 2; g.add(l);
+    const cap = mesh(geo.cyl, mat.logCut, x, y, -2.02, 0.42, 0.05, 0.42); cap.rotation.x = Math.PI / 2; g.add(cap);
+  }
+  g.add(mesh(geo.box, mat.snow, 0, 2.62, 0, 1.1, 0.18, 3.8));
+  return g;
+}
+
+function buildCabin() {
+  const g = new THREE.Group();
+  g.add(mesh(geo.box, mat.wood, 0, 1.6, 0, 4.6, 3.2, 4.2));
+  const roof = mesh(geo.cone, matRoof, 0, 4.2, 0, 4.2, 2.4, 4.2); roof.rotation.y = Math.PI / 4; g.add(roof);
+  const sn = mesh(geo.cone, mat.snow, 0, 4.55, 0, 3.0, 1.6, 3.0); sn.rotation.y = Math.PI / 4; g.add(sn);
+  g.add(mesh(geo.box, mat.woodDark, 0, 1.0, -2.12, 1.0, 2.0, 0.1));
+  g.add(mesh(geo.box, matIce, 1.3, 1.9, -2.12, 0.9, 0.9, 0.1));
+  g.add(mesh(geo.box, matStone, -1.6, 4.6, 0.8, 0.7, 2.2, 0.7));
+  return g;
+}
+
+function buildFence(len = 8) {
+  const g = new THREE.Group();
+  const n = Math.max(2, Math.round(len / 2.2));
+  for (let i = 0; i <= n; i++) g.add(mesh(geo.box, mat.woodDark, -len / 2 + i * len / n, 0.9, 0, 0.22, 1.8, 0.22));
+  for (const y of [0.7, 1.3]) g.add(mesh(geo.box, mat.wood, 0, y, 0, len, 0.18, 0.12));
+  g.add(mesh(geo.box, mat.snow, 0, 1.45, 0, len, 0.1, 0.3));
+  return g;
+}
+
+// jagged low-poly mountain (random every call), snow-capped via vertex colours
+const matMountain = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+function buildMountain(h, r) {
+  const seg = 5 + Math.floor(Math.random() * 3), rings = 6;
+  const g = new THREE.CylinderGeometry(r * rnd(0.04, 0.14), r, h, seg, rings, false);
+  const pos = g.attributes.position, col = new Float32Array(pos.count * 3);
+  const snowLine = rnd(0.45, 0.65), c = new THREE.Color();
+  const rockA = new THREE.Color(0x6f7f95), rockB = new THREE.Color(0x56647a), white = new THREE.Color(0xf4f9ff);
+  const px = rnd(-1, 1), pz = rnd(-1, 1);
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i), t = y / h + 0.5;
+    const k = (1 - t * 0.6) * r * 0.22;
+    pos.setX(i, pos.getX(i) + rnd(-k, k) + px * t * r * 0.15);
+    pos.setZ(i, pos.getZ(i) + rnd(-k, k) + pz * t * r * 0.15);
+    pos.setY(i, y + (t < 0.98 ? rnd(-h * 0.04, h * 0.04) : 0));
+    const n = Math.random() * 0.25;
+    if (t + n * 0.3 > snowLine) c.copy(white); else c.copy(rockA).lerp(rockB, Math.random());
+    col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, matMountain);
+  m.position.y = h / 2 - h * 0.12;
+  const grp = new THREE.Group(); grp.add(m);
+  // secondary peak for an intricate silhouette
+  if (Math.random() < 0.7) {
+    const h2 = h * rnd(0.45, 0.7), r2 = r * rnd(0.4, 0.6);
+    const g2 = new THREE.CylinderGeometry(r2 * 0.06, r2, h2, seg, 4, false);
+    const p2 = g2.attributes.position, c2 = new Float32Array(p2.count * 3);
+    for (let i = 0; i < p2.count; i++) {
+      const t = p2.getY(i) / h2 + 0.5;
+      p2.setX(i, p2.getX(i) + rnd(-r2 * 0.12, r2 * 0.12)); p2.setZ(i, p2.getZ(i) + rnd(-r2 * 0.12, r2 * 0.12));
+      if (t > snowLine + 0.1) c.copy(white); else c.copy(rockB).lerp(rockA, Math.random());
+      c2[i * 3] = c.r; c2[i * 3 + 1] = c.g; c2[i * 3 + 2] = c.b;
+    }
+    g2.setAttribute('color', new THREE.BufferAttribute(c2, 3)); g2.computeVertexNormals();
+    const m2 = new THREE.Mesh(g2, matMountain);
+    const a = Math.random() * 6.28;
+    m2.position.set(Math.cos(a) * r * 0.75, h2 / 2 - h2 * 0.12, Math.sin(a) * r * 0.75);
+    grp.add(m2);
+  }
+  return grp;
+}
+
 /* ---------------- ground ---------------- */
 function makeSnowTexture() {
   const c = document.createElement('canvas'); c.width = c.height = 256;
@@ -231,7 +393,7 @@ function makeSnowTexture() {
   return t;
 }
 const snowTex = makeSnowTexture();
-const TILE = 20, GW = 300, GL = 560;
+const TILE = 20, GW = 900, GL = 620;
 snowTex.repeat.set(GW / TILE, GL / TILE);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(GW, GL), new THREE.MeshLambertMaterial({ map: snowTex }));
 ground.rotation.x = -Math.PI / 2 - SLOPE_ANGLE;
@@ -420,7 +582,7 @@ let objects = [];   // {type, mesh, x, z, hx, hz, h, ...}
 
 const game = {
   state: 'menu', t: 0, d: 0, x: 0, vx: 0, speed: 0, yOff: 0, vy: 0, ramp: null,
-  score: 0, gifts: 0, effects: {}, invuln: 0, deadT: 0, nextRow: 0, nextPower: 0, nextEdge: 0, nextMarker: 0, spin: 0, camShake: 0, fov: 62,
+  score: 0, gifts: 0, effects: {}, invuln: 0, deadT: 0, nextRow: 0, nextPower: 0, nextEdge: 0, nextMarker: 0, nextMtn: -60, spin: 0, camShake: 0, fov: 74,
 };
 window.snorwider = game; // handy for debugging
 window.__objs = () => objects;
@@ -430,7 +592,7 @@ function clearWorld() { for (const o of objects) world.remove(o.mesh); objects =
 function resetGame() {
   clearWorld();
   Object.assign(game, { t: 0, d: 0, x: 0, vx: 0, speed: 26, yOff: 0, vy: 0, ramp: null, score: 0, gifts: 0, effects: {}, invuln: 0, deadT: 0,
-    nextRow: 45, nextPower: 220, nextEdge: 0, nextMarker: 0, spin: 0, camShake: 0 });
+    nextRow: 45, nextPower: 220, nextEdge: 0, nextMarker: 0, nextMtn: -60, spin: 0, camShake: 0 });
   el.effects.innerHTML = '';
   sledModel.rotation.set(0, 0, 0); sledModel.userData.rider.rotation.set(0, 0, 0);
   sledModel.userData.rider.visible = true;
@@ -463,12 +625,25 @@ function place(type, m, x, d, props) {
 
 function difficulty() { return Math.min(1, game.d / 4500); }
 
-function spawnObstacle(kind, x, d) {
+function spawnObstacle(kind, x, d, opts = {}) {
+  const sc = opts.scale || 1;
   switch (kind) {
-    case 'tree': { const s = rnd(0.9, 1.25); return place('obstacle', buildTree(s), x, d, { hx: 1.3 * s, hz: 1.3 * s, h: 7, name: 'tree' }); }
-    case 'rock': { const s = rnd(0.9, 1.4); return place('obstacle', buildRock(s), x, d, { hx: 1.3 * s, hz: 1.1 * s, h: 1.5 * s, name: 'rock' }); }
-    case 'snowman': return place('obstacle', buildSnowman(), x, d, { hx: 0.8, hz: 0.8, h: 3.1, name: 'snowman' });
-    case 'log': { const len = rnd(4, 7); const m = buildLog(len); m.rotation.y = rnd(-0.2, 0.2); return place('obstacle', m, x, d, { hx: len / 2, hz: 0.6, h: 1.1, name: 'log' }); }
+    case 'tree': {
+      const t = buildTreeVar(rnd(1.0, 1.5) * sc);
+      return place('obstacle', t.g, x, d, { hx: t.extent * sc * 1.1, hz: t.extent * sc * 1.1, h: 12, name: 'tree' });
+    }
+    case 'dead': return place('obstacle', buildDeadTree(), x, d, { hx: 0.9, hz: 0.9, h: 9, name: 'tree' });
+    case 'rock': { const s = rnd(1.0, 1.7); return place('obstacle', buildRock(s), x, d, { hx: 1.3 * s, hz: 1.1 * s, h: 1.5 * s, name: 'rock' }); }
+    case 'boulders': { const b = buildBoulders(); return place('obstacle', b.g, x, d, { hx: b.hx, hz: 1.6, h: 2.4, name: 'rock' }); }
+    case 'snowman': { const m = buildSnowman(); const s = rnd(0.9, 1.4); m.scale.setScalar(s); m.rotation.y = rnd(-0.6, 0.6); return place('obstacle', m, x, d, { hx: 0.9 * s, hz: 0.9 * s, h: 3.2 * s, name: 'snowman' }); }
+    case 'log': { const len = rnd(4, 8); const m = buildLog(len); m.rotation.y = rnd(-0.25, 0.25); return place('obstacle', m, x, d, { hx: len / 2, hz: 0.7, h: 1.1, name: 'log' }); }
+    case 'ice': return place('obstacle', buildIce(), x, d, { hx: 2.0, hz: 1.5, h: 4.5, name: 'ice' });
+    case 'stump': return place('obstacle', buildStump(), x, d, { hx: 0.8, hz: 0.8, h: 1.0, name: 'log' });
+    case 'mound': { const m = buildMound(); return place('obstacle', m, x, d, { hx: 1.9, hz: 1.5, h: 1.0, name: 'snowman' }); }
+    case 'igloo': { const m = buildIgloo(); m.rotation.y = rnd(-0.5, 0.5); return place('obstacle', m, x, d, { hx: 2.4, hz: 2.4, h: 4.8, name: 'snowman' }); }
+    case 'stack': return place('obstacle', buildLogStack(), x, d, { hx: 2.0, hz: 2.2, h: 2.8, name: 'log' });
+    case 'cabin': return place('obstacle', buildCabin(), x, d, { hx: 2.7, hz: 2.5, h: 8, name: 'log' });
+    case 'fence': { const len = opts.len || rnd(6, 10); const m = buildFence(len); m.rotation.y = opts.rot || rnd(-0.15, 0.15); return place('obstacle', m, x, d, { hx: len / 2, hz: 0.4, h: 1.9, name: 'log' }); }
   }
 }
 
@@ -514,46 +689,137 @@ function spawnPower(x, d) {
   return o;
 }
 
+const KINDS_EASY = ['tree', 'tree', 'rock', 'stump', 'mound', 'dead'];
+const KINDS_ALL = ['tree', 'tree', 'tree', 'dead', 'rock', 'boulders', 'snowman', 'log', 'ice', 'stump', 'mound', 'igloo', 'stack', 'cabin', 'fence'];
+const kindsFor = (diff) => (diff < 0.12 ? KINDS_EASY : KINDS_ALL);
+const clampX = (x, m = 1.2) => THREE.MathUtils.clamp(x, -TRACK_HALF + m, TRACK_HALF - m);
+
+// 1) scattered mixed field
+function patScatter(d, diff) {
+  const count = Math.min(6, 2 + Math.floor(rnd(0, 2 + diff * 3)));
+  const slots = []; let tries = 0;
+  while (slots.length < count && tries++ < 30) {
+    const x = rnd(-TRACK_HALF + 1.5, TRACK_HALF - 1.5);
+    if (slots.every((s) => Math.abs(s - x) > 6)) slots.push(x);
+  }
+  const ks = kindsFor(diff);
+  for (const x of slots) spawnObstacle(pick(ks), x, d + rnd(-4, 4));
+  if (Math.random() < 0.5) spawnGift(clampX(rnd(-12, 12)), d + 6);
+  return d + rnd(13, 18) - diff * 4;
+}
+// 2) wall with a gap (trees / fence / boulders)
+function patWall(d, diff) {
+  const gapW = 9 - diff * 2.5, gapX = rnd(-TRACK_HALF + gapW / 2 + 2, TRACK_HALF - gapW / 2 - 2);
+  const style = pick(['tree', 'fence', 'boulders', 'mixed']);
+  for (let x = -TRACK_HALF + 2; x <= TRACK_HALF - 1; x += 4.4) {
+    if (Math.abs(x - gapX) < gapW / 2) continue;
+    const k = style === 'mixed' ? pick(['tree', 'rock', 'ice', 'dead']) : style === 'fence' ? 'stump' : style === 'boulders' ? 'rock' : 'tree';
+    spawnObstacle(k, x, d + rnd(-1, 1));
+  }
+  if (style === 'fence') for (const side of [-1, 1]) {
+    const lo = side < 0 ? -TRACK_HALF : gapX + gapW / 2, hi = side < 0 ? gapX - gapW / 2 : TRACK_HALF;
+    if (hi - lo > 3) spawnObstacle('fence', (lo + hi) / 2, d, { len: hi - lo, rot: 0 });
+  }
+  spawnGift(gapX, d + 3); spawnGift(gapX, d + 6);
+  return d + rnd(18, 22);
+}
+// 3) slalom: alternating big obstacles
+function patSlalom(d, diff) {
+  const n = 4 + Math.floor(rnd(0, 3)); let side = Math.random() < 0.5 ? -1 : 1;
+  const k = pick(['boulders', 'ice', 'tree', 'igloo', 'stack']);
+  for (let i = 0; i < n; i++) {
+    const x = clampX(side * rnd(3, 8) + rnd(-1.5, 1.5), 2.5);
+    spawnObstacle(k, x, d + i * (11 - diff * 2));
+    spawnGift(-side * rnd(4, 8), d + i * (11 - diff * 2) + 5);
+    side = -side;
+  }
+  return d + n * (11 - diff * 2) + 6;
+}
+// 4) corridor between two tree lines that meanders
+function patCorridor(d, diff) {
+  const len = 60 + Math.floor(rnd(0, 30)); let c = rnd(-6, 6); const w = 6.2 - diff * 1.0;
+  for (let t = 0; t < len; t += 5.5) {
+    c = THREE.MathUtils.clamp(c + rnd(-3.2, 3.2), -TRACK_HALF + w + 2, TRACK_HALF - w - 2);
+    spawnObstacle(Math.random() < 0.7 ? 'tree' : pick(['rock', 'ice', 'dead']), c - w - rnd(0, 1.5), d + t);
+    spawnObstacle(Math.random() < 0.7 ? 'tree' : pick(['rock', 'ice', 'dead']), c + w + rnd(0, 1.5), d + t + rnd(0, 2));
+    if (Math.random() < 0.35) spawnGift(c, d + t + 2.5);
+    if (Math.random() < 0.15 + diff * 0.15) spawnObstacle(pick(['stump', 'log', 'mound']), c + rnd(-1.5, 1.5), d + t + 3);
+  }
+  return d + len + 10;
+}
+// 5) diagonal line with gaps + cabin / igloo landmark
+function patDiagonal(d, diff) {
+  const dir = Math.random() < 0.5 ? 1 : -1; const n = 6;
+  for (let i = 0; i < n; i++) {
+    const x = clampX(-dir * 12 + dir * i * 4.8, 1.5);
+    spawnObstacle(pick(['rock', 'tree', 'boulders', 'ice', 'dead']), x, d + i * 5);
+  }
+  if (Math.random() < 0.6) spawnObstacle(pick(['cabin', 'igloo', 'stack']), clampX(dir * rnd(2, 10), 3), d + 6 * 5 + 8);
+  return d + 48;
+}
+// 6) dense forest patch with a winding path
+function patForest(d, diff) {
+  const len = 36; let c = rnd(-7, 7);
+  for (let t = 0; t < len; t += 3.6) {
+    c = THREE.MathUtils.clamp(c + rnd(-2.2, 2.2), -9, 9);
+    for (let x = -TRACK_HALF + 1.5; x <= TRACK_HALF - 1; x += rnd(3.4, 5)) {
+      if (Math.abs(x - c) < 4.6 - diff) continue;
+      spawnObstacle(Math.random() < 0.8 ? 'tree' : 'dead', x + rnd(-0.6, 0.6), d + t + rnd(-1.2, 1.2));
+    }
+    if (Math.random() < 0.4) spawnGift(c, d + t + 1.8);
+  }
+  return d + len + 8;
+}
+// 7) ramp with gift arc and a landing hazard
+function patRamp(d) {
+  const x = rnd(-9, 9);
+  spawnRamp(x, d);
+  for (let i = 0; i < 4; i++) spawnGift(x, d + 10 + i * 4.5, 2.6 + Math.sin(i / 3 * Math.PI) * 1.2);
+  if (Math.random() < 0.8) spawnObstacle(pick(['rock', 'log', 'snowman', 'stack', 'fence', 'mound']), clampX(x + rnd(-2, 2), 3.5), d + rnd(14, 22));
+  return d + 30;
+}
+// 8) gift line
+function patGifts(d) {
+  const x = rnd(-12, 12), dir = rnd(-0.6, 0.6);
+  for (let i = 0; i < 7; i++) spawnGift(clampX(x + dir * i, 1), d + i * 3.2);
+  return d + 26;
+}
+
+let lastPat = '';
 function spawnRow(d) {
   const diff = difficulty();
-  const r = Math.random();
-  // ramp with a gift arc & a landing obstacle
-  if (r < 0.14 && d > 120) {
-    const x = rnd(-9, 9);
-    spawnRamp(x, d);
-    for (let i = 0; i < 4; i++) spawnGift(x, d + 10 + i * 4.5, 2.6 + Math.sin(i / 3 * Math.PI) * 1.2);
-    if (Math.random() < 0.7) spawnObstacle(pick(['rock', 'log', 'snowman']), x + rnd(-2, 2), d + rnd(15, 24));
-    return d + 28;
-  }
-  // gift line
-  if (r < 0.30) {
-    const x = rnd(-12, 12), dir = rnd(-0.6, 0.6);
-    for (let i = 0; i < 6; i++) spawnGift(THREE.MathUtils.clamp(x + dir * i, -TRACK_HALF + 1, TRACK_HALF - 1), d + i * 3.2);
-    return d + 24;
-  }
-  // obstacle row
-  const count = Math.min(5, 1 + Math.floor(rnd(1, 2.4 + diff * 3)));
-  const slots = [];
-  let tries = 0;
-  while (slots.length < count && tries++ < 20) {
-    const x = rnd(-TRACK_HALF + 1.5, TRACK_HALF - 1.5);
-    if (slots.every((s) => Math.abs(s - x) > 6.5)) slots.push(x);
-  }
-  const kinds = diff < 0.15 ? ['tree', 'tree', 'rock'] : ['tree', 'tree', 'rock', 'snowman', 'log'];
-  for (const x of slots) spawnObstacle(pick(kinds), x, d + rnd(-2, 2));
-  // sprinkle a gift in the gap
-  if (Math.random() < 0.5) spawnGift(rnd(-TRACK_HALF + 2, TRACK_HALF - 2), d + 5);
-  return d + rnd(11, 14) - diff * 4;
+  const pats = [['scatter', 3, patScatter], ['wall', 2, patWall], ['slalom', 2, patSlalom], ['corridor', 2, patCorridor],
+    ['diag', 2, patDiagonal], ['forest', 1.5, patForest], ['ramp', d > 100 ? 2.2 : 0, patRamp], ['gifts', 1.2, patGifts]];
+  let tot = 0; for (const p of pats) tot += p[0] === lastPat ? 0 : p[1];
+  let r = Math.random() * tot, chosen = pats[0];
+  for (const p of pats) { if (p[0] === lastPat) continue; r -= p[1]; if (r <= 0) { chosen = p; break; } }
+  lastPat = chosen[0];
+  return chosen[2](d, diff);
 }
 
 function spawnEdge(d) {
   for (const side of [-1, 1]) {
     const dense = 1 + Math.floor(Math.random() * 3);
     for (let i = 0; i < dense; i++) {
-      const x = side * rnd(TRACK_HALF + 3, TRACK_HALF + 42);
-      const t = buildTree(rnd(1.0, 1.9));
-      t.rotation.y = Math.random() * 6;
+      const x = side * rnd(TRACK_HALF + 3, TRACK_HALF + 40);
+      let t;
+      const r = Math.random();
+      if (r < 0.12) t = buildDeadTree(); else if (r < 0.2) t = buildBoulders().g; else if (r < 0.25) t = buildIce(); else t = buildTreeVar(rnd(1.1, 2.0)).g;
       place('deco', t, x, d + rnd(0, 6), {});
+    }
+  }
+}
+
+// huge randomly generated mountains flanking the course
+function spawnMountains(d) {
+  for (const side of [-1, 1]) {
+    const n = 2 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < n; i++) {
+      const h = rnd(40, 150) * (1 + i * 0.15), r = h * rnd(0.7, 1.2);
+      const x = side * (TRACK_HALF + 40 + r * 0.55 + i * rnd(30, 70) + rnd(0, 30));
+      const m = buildMountain(h, r);
+      m.rotation.y = Math.random() * 6;
+      place('deco', m, x, d + rnd(-25, 25), { cull: r * 1.6 + 40 });
     }
   }
 }
@@ -561,7 +827,8 @@ function spawnEdge(d) {
 function updateSpawning() {
   const horizon = game.d + SPAWN_AHEAD;
   while (game.nextRow < horizon) game.nextRow = spawnRow(game.nextRow);
-  while (game.nextEdge < horizon) { spawnEdge(game.nextEdge); game.nextEdge += 7; }
+  while (game.nextEdge < horizon) { spawnEdge(game.nextEdge); game.nextEdge += 6; }
+  while (game.nextMtn < horizon + 120) { spawnMountains(game.nextMtn); game.nextMtn += rnd(40, 60); }
   while (game.nextMarker < horizon) {
     for (const s of [-1, 1]) { const m = buildMarker(s); place('deco', m, s * (TRACK_HALF + 1.6), game.nextMarker, {}); }
     game.nextMarker += 22;
@@ -695,7 +962,7 @@ function update(dt) {
   const z = -game.d;
   for (let i = objects.length - 1; i >= 0; i--) {
     const o = objects[i];
-    if (o.z > z + CULL_BEHIND) { world.remove(o.mesh); objects.splice(i, 1); continue; }
+    if (o.z > z + (o.cull || CULL_BEHIND)) { world.remove(o.mesh); objects.splice(i, 1); continue; }
     if (o.type === 'gift') { o.mesh.rotation.y += dt * 2.2; o.mesh.position.y = groundY(o.mesh.position.z) + o.rel + Math.sin(game.t * 3 + o.x) * 0.15; }
     else if (o.type === 'power') {
       o.core.rotation.y += dt * 2.5; o.orb.scale.setScalar(1 + Math.sin(game.t * 4) * 0.06);
@@ -844,7 +1111,7 @@ const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
 let camInit = false;
 function updateCamera(dt) {
   const z = -game.d;
-  const back = 9.5, up = 4.3;
+  const back = 5.6, up = 2.3;
   const cz = z + back;
   const tx = game.x * 0.72;
   const ty = groundY(cz) + up + game.yOff * 0.55;
@@ -859,11 +1126,11 @@ function updateCamera(dt) {
     camera.position.x += (Math.random() - 0.5) * game.camShake * 0.8;
     camera.position.y += (Math.random() - 0.5) * game.camShake * 0.8;
   }
-  const lz = z - 16;
-  camLook.set(game.x * 0.9, groundY(lz) + 2.6 + game.yOff * 0.3, lz);
+  const lz = z - 14;
+  camLook.set(game.x * 0.9, groundY(lz) + 1.9 + game.yOff * 0.3, lz);
   camera.lookAt(camLook);
   camera.rotation.z = -game.vx * 0.004;
-  const fovT = 62 + (game.speed - 26) * 0.55 + (has('turbo') ? 8 : 0);
+  const fovT = 74 + (game.speed - 26) * 0.5 + (has('turbo') ? 8 : 0);
   game.fov += (fovT - game.fov) * (1 - Math.exp(-4 * dt));
   if (Math.abs(camera.fov - game.fov) > 0.05) { camera.fov = game.fov; camera.updateProjectionMatrix(); }
 
