@@ -7,7 +7,8 @@ import * as THREE from './lib/three.module.js';
 const SLOPE_ANGLE = 0.34;
 const S = Math.tan(SLOPE_ANGLE);           // ground height = z * S
 const groundY = (z) => z * S;
-const TRACK_HALF = 15.5;                   // playable half width
+const SLED_R = 0.55;                       // sled collision circle radius (half its width)
+const TRACK_HALF = 15.5;                   // sled-centre limit; the sled's side touches the wall exactly there
 const GRAVITY = 46;
 const JUMP_V = 18;
 const SPAWN_AHEAD = 240;
@@ -450,7 +451,7 @@ ground.rotation.x = -Math.PI / 2 - SLOPE_ANGLE;
 scene.add(ground);
 
 // straight, truly vertical side walls hugging the track (top = ground + WALL_H, sheared with the slope)
-const WALL_X = TRACK_HALF + 0.9, WALL_H = 16, WALL_LEN = 620;
+const WALL_X = TRACK_HALF + SLED_R, WALL_H = 16, WALL_LEN = 620;
 const wallTex = (() => {
   const c = document.createElement('canvas'); c.width = 128; c.height = 128;
   const g = c.getContext('2d');
@@ -763,7 +764,7 @@ function circleHitsObstacle(o, wx, wz, r) {
 }
 
 // The sled is two circles along its length.
-const SLED_R = 0.55, SLED_OFFS = [-0.45, 0.45];
+const SLED_OFFS = [-0.45, 0.45];
 function sledHits(o, px, pz) {
   for (const oz of SLED_OFFS) if (circleHitsObstacle(o, px, pz + oz, SLED_R)) return true;
   return false;
@@ -819,20 +820,20 @@ const clampX = (x, m = 1.2) => THREE.MathUtils.clamp(x, -TRACK_HALF + m, TRACK_H
 
 // 1) scattered mixed field
 function patScatter(d, diff) {
-  const count = Math.min(6, 2 + Math.floor(rnd(0, 2 + diff * 3)));
+  const count = Math.min(4, 1 + Math.floor(rnd(0, 2 + diff * 2)));
   const slots = []; let tries = 0;
   while (slots.length < count && tries++ < 30) {
     const x = rnd(-TRACK_HALF + 1.5, TRACK_HALF - 1.5);
-    if (slots.every((s) => Math.abs(s - x) > 6)) slots.push(x);
+    if (slots.every((s) => Math.abs(s - x) > 8)) slots.push(x);
   }
   const ks = kindsFor(diff);
   for (const x of slots) spawnObstacle(pick(ks), x, d + rnd(-4, 4));
   if (Math.random() < 0.5) spawnGift(clampX(rnd(-12, 12)), d + 6);
-  return d + rnd(13, 18) - diff * 4;
+  return d + rnd(20, 28) - diff * 4;
 }
 // 2) wall with a gap (trees / fence / boulders)
 function patWall(d, diff) {
-  const gapW = 9 - diff * 2.5, gapX = rnd(-TRACK_HALF + gapW / 2 + 2, TRACK_HALF - gapW / 2 - 2);
+  const gapW = 12 - diff * 3, gapX = rnd(-TRACK_HALF + gapW / 2 + 2, TRACK_HALF - gapW / 2 - 2);
   const style = pick(['tree', 'fence', 'boulders', 'mixed']);
   for (let x = -TRACK_HALF + 2; x <= TRACK_HALF - 1; x += 4.4) {
     if (Math.abs(x - gapX) < gapW / 2) continue;
@@ -844,49 +845,49 @@ function patWall(d, diff) {
     if (hi - lo > 3) spawnObstacle('fence', (lo + hi) / 2, d, { len: hi - lo, rot: 0 });
   }
   spawnGift(gapX, d + 3); spawnGift(gapX, d + 6);
-  return d + rnd(18, 22);
+  return d + rnd(28, 34);
 }
 // 3) slalom: alternating big obstacles
 function patSlalom(d, diff) {
-  const n = 4 + Math.floor(rnd(0, 3)); let side = Math.random() < 0.5 ? -1 : 1;
+  const n = 3 + Math.floor(rnd(0, 3)); let side = Math.random() < 0.5 ? -1 : 1;
   const k = pick(['boulders', 'ice', 'tree', 'igloo', 'stack']);
   for (let i = 0; i < n; i++) {
     const x = clampX(side * rnd(3, 8) + rnd(-1.5, 1.5), 2.5);
-    spawnObstacle(k, x, d + i * (11 - diff * 2));
-    spawnGift(-side * rnd(4, 8), d + i * (11 - diff * 2) + 5);
+    spawnObstacle(k, x, d + i * (16 - diff * 3));
+    spawnGift(-side * rnd(4, 8), d + i * (16 - diff * 3) + 5);
     side = -side;
   }
-  return d + n * (11 - diff * 2) + 6;
+  return d + n * (16 - diff * 3) + 6;
 }
 // 4) corridor between two tree lines that meanders
 function patCorridor(d, diff) {
-  const len = 60 + Math.floor(rnd(0, 30)); let c = rnd(-6, 6); const w = 6.2 - diff * 1.0;
-  for (let t = 0; t < len; t += 5.5) {
+  const len = 60 + Math.floor(rnd(0, 30)); let c = rnd(-6, 6); const w = 8.5 - diff * 1.5;
+  for (let t = 0; t < len; t += 7.5) {
     c = THREE.MathUtils.clamp(c + rnd(-3.2, 3.2), -TRACK_HALF + w + 2, TRACK_HALF - w - 2);
     spawnObstacle(Math.random() < 0.7 ? 'tree' : pick(['rock', 'ice', 'dead']), c - w - rnd(0, 1.5), d + t);
     spawnObstacle(Math.random() < 0.7 ? 'tree' : pick(['rock', 'ice', 'dead']), c + w + rnd(0, 1.5), d + t + rnd(0, 2));
     if (Math.random() < 0.35) spawnGift(c, d + t + 2.5);
-    if (Math.random() < 0.15 + diff * 0.15) spawnObstacle(pick(['stump', 'log', 'mound']), c + rnd(-1.5, 1.5), d + t + 3);
+    if (Math.random() < 0.08 + diff * 0.1) spawnObstacle(pick(['stump', 'log', 'mound']), c + rnd(-1.5, 1.5), d + t + 3);
   }
   return d + len + 10;
 }
 // 5) diagonal line with gaps + cabin / igloo landmark
 function patDiagonal(d, diff) {
-  const dir = Math.random() < 0.5 ? 1 : -1; const n = 6;
+  const dir = Math.random() < 0.5 ? 1 : -1; const n = 5;
   for (let i = 0; i < n; i++) {
-    const x = clampX(-dir * 12 + dir * i * 4.8, 1.5);
-    spawnObstacle(pick(['rock', 'tree', 'boulders', 'ice', 'dead']), x, d + i * 5);
+    const x = clampX(-dir * 12 + dir * i * 6, 1.5);
+    spawnObstacle(pick(['rock', 'tree', 'boulders', 'ice', 'dead']), x, d + i * 8);
   }
-  if (Math.random() < 0.6) spawnObstacle(pick(['cabin', 'igloo', 'stack']), clampX(dir * rnd(2, 10), 3), d + 6 * 5 + 8);
-  return d + 48;
+  if (Math.random() < 0.6) spawnObstacle(pick(['cabin', 'igloo', 'stack']), clampX(dir * rnd(2, 10), 3), d + 5 * 8 + 10);
+  return d + 58;
 }
 // 6) dense forest patch with a winding path
 function patForest(d, diff) {
   const len = 36; let c = rnd(-7, 7);
-  for (let t = 0; t < len; t += 3.6) {
+  for (let t = 0; t < len; t += 5) {
     c = THREE.MathUtils.clamp(c + rnd(-2.2, 2.2), -9, 9);
-    for (let x = -TRACK_HALF + 1.5; x <= TRACK_HALF - 1; x += rnd(3.4, 5)) {
-      if (Math.abs(x - c) < 4.6 - diff) continue;
+    for (let x = -TRACK_HALF + 1.5; x <= TRACK_HALF - 1; x += rnd(4.5, 6)) {
+      if (Math.abs(x - c) < 6.5 - diff * 1.5) continue;
       spawnObstacle(Math.random() < 0.8 ? 'tree' : 'dead', x + rnd(-0.6, 0.6), d + t + rnd(-1.2, 1.2));
     }
     if (Math.random() < 0.4) spawnGift(c, d + t + 1.8);
@@ -917,7 +918,7 @@ function spawnRow(d) {
   let r = Math.random() * tot, chosen = pats[0];
   for (const p of pats) { if (p[0] === lastPat) continue; r -= p[1]; if (r <= 0) { chosen = p; break; } }
   lastPat = chosen[0];
-  return chosen[2](d, diff);
+  return chosen[2](d, diff) + rnd(8, 14) * (1 - diff * 0.5);   // breathing room between patterns
 }
 
 function spawnEdge(d) {
@@ -1019,7 +1020,7 @@ function update(dt) {
 
   if (game.state === 'play') {
     // speed
-    let target = Math.min(26 + game.score * 0.012, 52);   // ramps up with score
+    let target = Math.min(26 + game.score * 0.008, 46);   // ramps up with score
     if (has('turbo')) target *= 1.55;
     if (has('slow')) target *= 0.6;
     game.speed += (target - game.speed) * (1 - Math.exp(-2.2 * dt));
